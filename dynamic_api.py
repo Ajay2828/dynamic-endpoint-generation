@@ -93,6 +93,21 @@ def endpoint_exists(endpoint_name: str) -> bool:
     conn.close()
     return exists
 
+def get_query_by_endpoint_name(endpoint_name: str):
+    conn = psycopg2.connect(**DB_CONFIG)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, query FROM endpoint_registry WHERE endpoint_name = %s
+    """, (endpoint_name,))
+    result = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    if result:
+        return {'id': result[0], 'query': result[1]}
+    else:
+        return None
+
+
 @app.route('/generate-endpoint', methods=['POST'])
 def generate_endpoint():
     data = request.get_json()
@@ -139,12 +154,20 @@ def handle_dynamic_endpoint(endpoint_name):
     if endpoint_name not in endpoint_configs:
         return jsonify({'error': f'Endpoint /{endpoint_name} not found'}), 404
     
-    config = endpoint_configs[endpoint_name]
     filters = request.args.to_dict()
+    filter_values = list(filters.values()) 
+    query_template = get_query_by_endpoint_name(endpoint_name)
+    final_query = sql.SQL(query_template)
+
+    conn = psycopg2.connect(**DB_CONFIG)
+    cursor = conn.cursor()
+    cursor.execute(final_query, filter_values)
+    columns = [desc[0] for desc in cursor.description]
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
     
-    
-    
-    return jsonify(result), status
+    return jsonify([dict(zip(columns, rows))]), 200
 
 @app.route('/list-endpoints', methods=['GET'])
 def list_endpoints():
