@@ -30,39 +30,35 @@ def get_table_schema(schema_name: str, table_name: str) -> Dict[str, str]:
     conn.close()
     return schema
 
-def run_dynamic_query(schema_name: str, table_name: str, select_columns: List[str], filter_columns: List[str], filters: Dict[str, str]):
-    for col in filters:
-        if col not in filter_columns:
-            return {'error': f'Cannot filter on {col}'}, 400
-
+def make_dynamic_query(schema_name: str, table_name: str, select_columns: List[str], filter_columns: List[str]) -> str:
+    """
+    Returns a parameterized SQL query string with %s placeholders for filters.
+    This function does NOT execute the query — just returns the query as a string.
+    """
     select_clause = sql.SQL(', ').join(map(sql.Identifier, select_columns))
 
-    query = sql.SQL("SELECT {} FROM {}.{}").format(
+    base_query = sql.SQL("SELECT {} FROM {}.{}").format(
         select_clause,
         sql.Identifier(schema_name),
         sql.Identifier(table_name)
     )
 
-    where_clauses = []
-    params = []
-
-    for col, val in filters.items():
-        if val is not None:
-            where_clauses.append(sql.SQL("{} = %s").format(sql.Identifier(col)))
-            params.append(val)
+    # Create WHERE clause with placeholders
+    where_clauses = [
+        sql.SQL("{} = %s").format(sql.Identifier(col)) for col in filter_columns
+    ]
 
     if where_clauses:
-        query = sql.SQL("{} WHERE {}").format(query, sql.SQL(" AND ").join(where_clauses))
+        query = sql.SQL("{} WHERE {}").format(
+            base_query,
+            sql.SQL(" AND ").join(where_clauses)
+        )
+    else:
+        query = base_query
 
-    conn = psycopg2.connect(**DB_CONFIG)
-    cursor = conn.cursor()
-    cursor.execute(query, params)
-    columns = [desc[0] for desc in cursor.description]
-    results = [dict(zip(columns, row)) for row in cursor.fetchall()]
-    cursor.close()
-    conn.close()
+    # Return the final query as a string (with %s placeholders)
+    return query.as_string(psycopg2.connect(**DB_CONFIG))
 
-    return results, 200
 
 def generate_endpoint_name(table_name: str, select_columns: List[str], filter_columns: List[str]) -> str:
     select_part = "_".join(select_columns)
@@ -70,6 +66,32 @@ def generate_endpoint_name(table_name: str, select_columns: List[str], filter_co
     endpoint_name = f"{table_name}__select_{select_part}__filter_{filter_part}"
     endpoint_name = endpoint_name.lower().replace(" ", "_")
     return endpoint_name
+
+def insert_endpoint_to_db(endpoint_name, endpoint_path, query_str, created_by):
+    conn = psycopg2.connect(**DB_CONFIG)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO endpoint_registry (endpoint_name, endpoint_path, query, created_by)
+        VALUES (%s, %s, %s, %s)
+        RETURNING id;
+    """, (endpoint_name, endpoint_path, query_str, created_by))
+    endpoint_id = cursor.fetchone()[0]
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return endpoint_id
+
+def endpoint_exists(endpoint_name: str) -> bool:
+    conn = psycopg2.connect(**DB_CONFIG)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT 1 FROM endpoint_registry WHERE endpoint_name = %s LIMIT 1;",
+        (endpoint_name,)
+    )
+    exists = cursor.fetchone() is not None
+    cursor.close()
+    conn.close()
+    return exists
 
 @app.route('/generate-endpoint', methods=['POST'])
 def generate_endpoint():
@@ -79,6 +101,7 @@ def generate_endpoint():
     schema_name = data.get('schema_name', 'public')
     filter_columns = data.get('filter_columns', [])
     select_columns = data.get('select_columns', [])
+    created_by = data.get('created_by', 'anonymous')
 
     if not table_name or not select_columns:
         return jsonify({'error': 'Both table_name and select_columns are required'}), 400
@@ -95,23 +118,20 @@ def generate_endpoint():
     endpoint_name = generate_endpoint_name(table_name, select_columns, filter_columns)
     endpoint_path = f'/dynamic/{endpoint_name}'
 
-    if endpoint_name in endpoint_configs:
+    if endpoint_exists(endpoint_name):
         return jsonify({'error': f'Endpoint already exists at {endpoint_path}'}), 400
 
-    # Store the endpoint configuration
-    endpoint_configs[endpoint_name] = {
-        'endpoint_path': endpoint_path,
-        'table_name': table_name,
-        'schema_name': schema_name,
-        'select_columns': select_columns,
-        'filter_columns': filter_columns
-    }
+    
+    query_str = make_dynamic_query(schema_name, table_name, select_columns, filter_columns)
+
+    insert_endpoint_to_db(endpoint_name, endpoint_path, query_str, created_by)
 
     return jsonify({
         'message': f'Endpoint created at {endpoint_path}',
         'endpoint_path': endpoint_path,
         'method': 'GET'
     })
+
 
 # Catch-all route for dynamic endpoints
 @app.route('/dynamic/<path:endpoint_name>', methods=['GET'])
@@ -122,13 +142,7 @@ def handle_dynamic_endpoint(endpoint_name):
     config = endpoint_configs[endpoint_name]
     filters = request.args.to_dict()
     
-    result, status = run_dynamic_query(
-        config['schema_name'],
-        config['table_name'],
-        config['select_columns'],
-        config['filter_columns'],
-        filters
-    )
+    
     
     return jsonify(result), status
 
