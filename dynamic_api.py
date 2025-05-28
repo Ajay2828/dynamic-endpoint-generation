@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import psycopg2
 from psycopg2 import sql
 from typing import Dict, List
+from datetime import datetime,timedelta,timezone
 
 # Create main app
 app = Flask(__name__)
@@ -14,8 +15,16 @@ DB_CONFIG = {
     'host': 'localhost'
 }
 
-# Store endpoint configurations
-endpoint_configs = {}
+def get_current_datetime():
+    # Get the current local time
+    local_now = datetime.now()
+    # Define the IST offset (UTC+5:30)
+    ist_offset = timedelta(hours=5, minutes=30)
+    # Create the IST timezone
+    ist_timezone = timezone(ist_offset)
+    # Convert local time to IST
+    ist_now = local_now.astimezone(ist_timezone)
+    return ist_now.strftime('%Y-%m-%d %H:%M:%S')
 
 def get_table_schema(schema_name: str, table_name: str) -> Dict[str, str]:
     conn = psycopg2.connect(**DB_CONFIG)
@@ -67,14 +76,14 @@ def generate_endpoint_name(table_name: str, select_columns: List[str], filter_co
     endpoint_name = endpoint_name.lower().replace(" ", "_")
     return endpoint_name
 
-def insert_endpoint_to_db(endpoint_name, endpoint_path, query_str, created_by):
+def insert_endpoint_to_db(endpoint_name, endpoint_path, query_str, created_by, created_at):
     conn = psycopg2.connect(**DB_CONFIG)
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO endpoint_registry (endpoint_name, endpoint_path, query, created_by)
-        VALUES (%s, %s, %s, %s)
+        INSERT INTO endpoint_registry (endpoint_name, endpoint_path, query, created_by, created_at)
+        VALUES (%s, %s, %s, %s, %s)
         RETURNING id;
-    """, (endpoint_name, endpoint_path, query_str, created_by))
+    """, (endpoint_name, endpoint_path, query_str, created_by, created_at))
     endpoint_id = cursor.fetchone()[0]
     conn.commit()
     cursor.close()
@@ -108,8 +117,21 @@ def get_query_by_endpoint_name(endpoint_name: str):
         return None
 
 
+def log_endpoint_usage(endpoint_id: int, accessed_at: str):
+    """ Logs the usage of a dynamic endpoint in the database. """
+    conn = psycopg2.connect(**DB_CONFIG)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO de_dynamic_api.endpoint_usage (endpoint_id, accessed_at)
+        VALUES (%s, %s)
+    """, (endpoint_id, accessed_at))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
 @app.route('/generate-endpoint', methods=['POST'])
 def generate_endpoint():
+    """ Generates a dynamic endpoint and a dynamic query will be stored in the database."""
     data = request.get_json()
 
     table_name = data.get('table_name')
@@ -138,8 +160,8 @@ def generate_endpoint():
 
     
     query_str = make_dynamic_query(schema_name, table_name, select_columns, filter_columns)
-
-    insert_endpoint_to_db(endpoint_name, endpoint_path, query_str, created_by)
+    created_at = get_current_datetime()
+    insert_endpoint_to_db(endpoint_name, endpoint_path, query_str, created_by, created_at)
 
     return jsonify({
         'message': f'Endpoint created at {endpoint_path}',
@@ -151,12 +173,20 @@ def generate_endpoint():
 # Catch-all route for dynamic endpoints
 @app.route('/dynamic/<path:endpoint_name>', methods=['GET'])
 def handle_dynamic_endpoint(endpoint_name):
-    if endpoint_name not in endpoint_configs:
+
+    if not endpoint_exists(endpoint_name):
         return jsonify({'error': f'Endpoint /{endpoint_name} not found'}), 404
     
     filters = request.args.to_dict()
+
     filter_values = list(filters.values()) 
-    query_template = get_query_by_endpoint_name(endpoint_name)
+    result = get_query_by_endpoint_name(endpoint_name)
+    query_template = result["query"]
+    endpoint_id = result["id"]
+
+    if not query_template:
+        return jsonify({'error': 'No query found for this endpoint'}), 404
+     
     final_query = sql.SQL(query_template)
 
     conn = psycopg2.connect(**DB_CONFIG)
@@ -166,12 +196,10 @@ def handle_dynamic_endpoint(endpoint_name):
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
+
+    log_endpoint_usage(endpoint_id, accessed_at=get_current_datetime())
     
     return jsonify([dict(zip(columns, rows))]), 200
-
-@app.route('/list-endpoints', methods=['GET'])
-def list_endpoints():
-    return jsonify(endpoint_configs)
 
 if __name__ == '__main__':
     app.run(debug=True)
