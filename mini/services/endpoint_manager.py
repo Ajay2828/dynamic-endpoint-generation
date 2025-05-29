@@ -4,7 +4,6 @@ from psycopg2 import sql
 from app import app
 import utils as utils
 from auth.middleware import api_key_required
-import logging
 import traceback
 
 
