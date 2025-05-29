@@ -4,6 +4,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+DB_CONFIG = {
+    'dbname': 'postgres',
+    'user': 'postgres',
+    'password': 'postgres',
+    'port': 5432,
+    'host': 'localhost'
+}
 
 class Config:
     # PostgreSQL
@@ -14,8 +21,7 @@ class Config:
     DB_PASS = os.getenv('DB_PASS')
     
     # JWT
-    JWT_SECRET = os.getenv('JWT_SECRET', 'super-secret-change-me')
-    JWT_EXPIRE_MINUTES = int(os.getenv('JWT_EXPIRE', '60'))
+    API_KEY = os.getenv('API_KEY', 'super-secret-change-me')
     
     # Rate Limiting
-    RATE_LIMIT = os.getenv('RATE_LIMIT', '100/hour')
+    RATE_LIMIT = os.getenv('RATE_LIMIT', '5/minute')

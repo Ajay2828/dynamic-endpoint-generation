@@ -20,14 +20,8 @@ def create_app():
     
     # Configure extensions
     db.init_app(app)
-    jwt.init_app(app)
     limiter.init_app(app)
-    
-    # Blueprint registration
-    from auth.routes import auth_bp
-    from api.routes import api_bp
-    app.register_blueprint(auth_bp)
-    app.register_blueprint(api_bp)
+    limiter.limit(app.config['RATE_LIMIT'])(app)
     
     # Database initialization
     with app.app_context():
@@ -42,8 +36,6 @@ def create_app():
 
 
 app = create_app()
-
-
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
