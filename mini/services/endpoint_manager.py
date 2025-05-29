@@ -2,13 +2,15 @@ from flask import request, jsonify
 import psycopg2
 from psycopg2 import sql
 from app import app
-import utils as utils
+import services.utils as utils
+from app import limiter
 from auth.middleware import api_key_required
 import traceback
 
 
 
 @app.route('/generate-endpoint', methods=['POST'])
+@limiter.limit(app.config['RATE_LIMIT'])
 @api_key_required
 def generate_endpoint():
     """ Generates a dynamic endpoint and a dynamic query will be stored in the database."""
@@ -58,6 +60,7 @@ def generate_endpoint():
 
 # Catch-all route for dynamic endpoints
 @app.route('/dynamic/<path:endpoint_name>', methods=['GET'])
+@limiter.limit(app.config['RATE_LIMIT'])
 @api_key_required
 def handle_dynamic_endpoint(endpoint_name):
     try:
@@ -92,3 +95,25 @@ def handle_dynamic_endpoint(endpoint_name):
         app.logger.error(traceback.format_exc())
         app.logger.logging.error('Dynamic API Error: {}'.format(e))
         return jsonify({"error": "Internal server error"}), 500
+    
+@app.route('/dynamic/list', methods=['GET'])
+@api_key_required
+def list_dynamic_endpoints():
+    try:
+        conn = psycopg2.connect(**utils.DB_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, endpoint_name, endpoint_path, created_by, created_at 
+            FROM de_dynamic_api.endpoint_registry 
+            ORDER BY created_at DESC
+        """)
+        rows = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
+        cursor.close()
+        conn.close()
+
+        return jsonify([dict(zip(columns, row)) for row in rows]), 200
+
+    except Exception as e:
+        app.logger.error(traceback.format_exc())
+        return jsonify({'error': 'Failed to fetch dynamic endpoints'}), 500

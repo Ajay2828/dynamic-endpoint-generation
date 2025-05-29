@@ -3,25 +3,24 @@ from dotenv import load_dotenv
 
 
 load_dotenv()
+# PostgreSQL
+DB_HOST = os.getenv('DB_HOST', 'localhost')
+DB_PORT = os.getenv('DB_PORT', '5432')
+DB_NAME = os.getenv('DB_NAME', 'postgres')
+DB_USER = os.getenv('DB_USER', 'postgres')
+DB_PASS = os.getenv('DB_PASS', 'postgres')
 
 DB_CONFIG = {
-    'dbname': 'postgres',
-    'user': 'postgres',
-    'password': 'postgres',
-    'port': 5432,
-    'host': 'localhost'
+    'dbname': DB_NAME,
+    'user': DB_USER,
+    'password': DB_PASS,
+    'port': DB_PORT,
+    'host': DB_HOST
 }
 
 class Config:
-    # PostgreSQL
-    DB_HOST = os.getenv('DB_HOST', 'localhost')
-    DB_PORT = os.getenv('DB_PORT', '5432')
-    DB_NAME = os.getenv('DB_NAME', 'dynamic_api')
-    DB_USER = os.getenv('DB_USER')
-    DB_PASS = os.getenv('DB_PASS')
-    
-    # JWT
-    API_KEY = os.getenv('API_KEY', 'super-secret-change-me')
+    # Key Configuration
+    API_KEY = os.getenv('API_KEY', 'b9c1e0e17a90f284b89b2e8b34b8d04eeaacec52025deeefc494a189e5ad70a3')
     
     # Rate Limiting
     RATE_LIMIT = os.getenv('RATE_LIMIT', '5/minute')

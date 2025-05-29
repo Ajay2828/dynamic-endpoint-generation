@@ -2,7 +2,6 @@ import psycopg2
 from psycopg2 import sql
 from typing import Dict, List
 from datetime import datetime,timedelta,timezone
-import utils as utils
 from config import DB_CONFIG
 
 
